@@ -1,0 +1,106 @@
+---
+title: "Final Project"
+author: "Berta Canal & Adam Olivares"
+date: "2023-11-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(glmnet)
+library(sigmoid)
+library(caret)
+library(ggplot2)
+
+set.seed(1234)
+```
+
+
+```{r}
+darwin <- read.csv("/Users/bertacanal/Desktop/DATASETS/darwin/data.csv", sep = ",", header = TRUE)
+```
+
+```{r}
+darwin_Y <- as.numeric(as.factor(darwin$class)) - 1
+darwin_x <- data.matrix(darwin[, !colnames(darwin) %in% c("ID", "class")])
+# darwin_x <- scale(darwin_x)
+```
+
+### LASSO-CV (Via cross-validation)
+
+
+```{r}
+t0 <- Sys.time()
+fit.lassocv <- cv.glmnet(x=darwin_x,y=darwin_Y,family ='binomial', nfolds = 10, aplha = 1)
+t1 <- Sys.time()
+cat('\nTime elapsed: ')
+```
+
+
+```{r}
+print(round(t1-t0,3))
+```
+
+```{r}
+fit.lassocv
+```
+
+```{r}
+plot(fit.lassocv) 
+```
+
+```{r}
+b.lassocv = as.vector(coef(fit.lassocv, s='lambda.min'))
+sum(b.lassocv != 0)
+```
+
+### LASSO-BIC (Via BIC)
+
+Now the $\lambda$ is set via BIC using the function `lasso.bic` from `routines_seminar1.R`.
+
+```{r}
+lasso.bic.logistic <- function(y,x,extended=FALSE) {
+  #Select model in LASSO path with best BIC (using LASSO regression estimates)
+  #Input
+  # - y: vector with response variable
+  # - x: design matrix
+  #
+  #Output: list with the following elements
+  # - coef: LASSO-estimated regression coefficient with lambda set via BIC
+  # - ypred: predicted y
+  # - lambda.opt: optimal value of lambda
+  # - lambda: data.frame with bic and number of selected variables for each value of lambda
+  require(glmnet)
+  fit <- glmnet(x=x,y=y,family='binomial',alpha=1)
+  pred <- predict(fit,newx=x,type='response')
+  n <- length(y)
+  p <- colSums(fit$beta!=0) + 1
+  if (!extended){
+    bic <- -2* colSums(y*log(pred)+(1-y)*log(1-pred)) + log(n)*p 
+  } else {
+    bic <- -2* colSums(y*log(pred)+(1-y)*log(1-pred)) + log(n)*p + 2*log(choose(ncol(x),p))
+  }
+  sel <- which.min(bic)
+  beta <- c(fit$a0[sel],fit$beta[,sel]); names(beta)[1]= 'Intercept'
+  ypred <- pred[,sel]
+  ans <- list(model=fit,coef=beta,ypred=ypred,lambda.opt=fit$lambda[sel],lambda=data.frame(lambda=fit$lambda,bic=bic,nvars=p))
+  return(ans)
+}
+```
+
+To use the BIC criteria, the parameter `extended` is set to `FALSE`.
+
+```{r}
+fit.lassobic = lasso.bic.logistic(x=darwin_x,y=darwin_Y, extended = FALSE)
+b.lassobic = fit.lassobic$coef
+names(fit.lassobic)
+round(b.lassobic, 3)
+```
+
+The number of non-zero coefficients for LASSO-BIC corresponds to:
+```{r}
+sum(b.lassobic != 0)
+```
