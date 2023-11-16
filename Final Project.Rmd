@@ -85,9 +85,8 @@ var_test <- var_test_results(darwin_x, 0.1)
 ```{r}
 var_test %>% count(status)
 ```
-
+correlation bewteen x features
 ```{r}
-
 correlations <- cor(darwin_x)
 highCorr <- findCorrelation(correlations, cutoff = .85, names = TRUE)
 print(highCorr)
