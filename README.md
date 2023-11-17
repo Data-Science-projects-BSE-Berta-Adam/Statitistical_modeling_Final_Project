@@ -1,5 +1,8 @@
 # Statitistical_modeling_Final_Project
 
+Related work:
+https://www.scitepress.org/Documents/2014/49007/
+
 Preguntes:
 
 - Si podem fer regression amb PCA
