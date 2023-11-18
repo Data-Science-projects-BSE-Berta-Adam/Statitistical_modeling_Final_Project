@@ -44,59 +44,10 @@ Count the number of instances of each class (dependent variable). No clas imbala
 ggplot(darwin, aes(x = class)) +
   geom_bar() 
 ```
+
+
 ```{r}
 data.frame(summary(darwin_x))
-```
-
-The Point-Biserial Correlation Coefficient is a correlation measure of the strength of association between a continuous-level variable (ratio or interval data) and a binary variable.
-
-```{r}
-cor_test_results <- function(x_data, y_data, cutoff){
-  
-    coef <- sapply(x_data, function(x) biserial.cor(x, y_data)) #apply biserial.cor function
-    status <- ifelse(abs(coef) >= cutoff, sprintf("above_%s", cutoff), sprintf("below_%s", cutoff))
-    data.frame(
-    #item = names(coef),
-    biserial_correlation = matrix(coef),
-    status = as.character(status), row.names = c(names(coef))
-  )  
-}
-test <- cor_test_results(darwin_x, darwin_Y, 0.2)
-```
-
-```{r}
-test %>% count(status)
-#test %>% biserial_correlation(status)
-```
-low variance features
-
-```{r}
-var_test_results <- function(x_data, cutoff){
-  
-    coef <- sapply(x_data, function(x) var(x)) #variance
-    status <- ifelse(coef >= cutoff, sprintf("above_%s", cutoff), sprintf("below_%s", cutoff))
-    data.frame(
-    item = names(coef),
-    variance = matrix(round(coef,3)),
-    status = as.character(status), row.names = c(names(coef))
-  )  
-}
-var_test <- var_test_results(darwin_x, 0.2)
-
-names_list_var_below_cutoff <- row.names(var_test[var_test$variance <= 0.2, ])
-```
-
-```{r}
-var_test %>% count(status)
-```
-correlation between x features. Pair-wise correlations are considered. If two variables have a high correlation, the function looks at the mean absolute correlation of each variable and removes the variable with the largest mean absolute correlation.
-```{r}
-correlations <- cor(darwin_x)
-highCorr <- findCorrelation(correlations, cutoff = .95, names = TRUE, exact = TRUE) #exact = TRUE will cause the function to re-evaluate the average correlations at each step
-print(highCorr)
-#new_darwin_x <- darwin_x[,!(names(darwin_x) %in% highCorr)]# eliminate by correlation
-#names_list_var_below_cutoff
-#new_darwin_x <- darwin_x[,!(names(darwin_x) %in% names_list_var_below_cutoff)]# eliminate by variance
 ```
 
 To deal with the problem of high dimensionality and correlation among features, we can summarize our current variables in a new set of 18 variables that contains the means of the same 18 variables observed across the 25 experiments. This is possible thanks to the structure of our data, which is organized in 450 variables that belongs to the results of 18 metrics for each of the 25 different experiments:
@@ -111,9 +62,7 @@ unique_variable_names
 
 ```
 
-
 ```{r}
-
 # create a new dataframe only containing the means of results in each metric across experiments for each individual:
 max_num_cols_per_variable <- 25 # number of experiments 
 
@@ -136,14 +85,83 @@ print(mean_darwin_x)
 
 ```
 
-With this summary, we can proceed to check the correlation coefficients and see if there is presence of multicolinearity in a simple way. WIth this information, we can go back to our original dataset and drop all the columns that belong to a given measure (remember, in each one of the 25 experiment the same 18 measures are collected:
+correlation between x features. Pair-wise correlations are considered. If two variables have a high correlation, the function looks at the mean absolute correlation of each variable and removes the variable with the largest mean absolute correlation.
 
 ```{r}
 correlations <- cor(mean_darwin_x)
-highCorr <- findCorrelation(correlations, cutoff = .90, names = TRUE, exact = TRUE) #exact = TRUE will cause the function to re-evaluate the average correlations at each step
+highCorr <- findCorrelation(correlations, cutoff = .95, names = TRUE, exact = TRUE)
+print(highCorr)
+```
+
+```{r}
+correlations
+```
+
+The Point-Biserial Correlation Coefficient is a correlation measure of the strength of association between a continuous-level variable (ratio or interval data) and a binary variable.
+
+```{r}
+cor_test_results <- function(x_data, y_data, cutoff){
+  
+    coef <- sapply(x_data, function(x) biserial.cor(x, y_data)) #apply biserial.cor function
+    status <- ifelse(abs(coef) >= cutoff, sprintf("above_%s", cutoff), sprintf("below_%s", cutoff))
+    data.frame(
+    #item = names(coef),
+    biserial_correlation = matrix(coef),
+    status = as.character(status), row.names = c(names(coef))
+  )  
+}
+test <- cor_test_results(mean_darwin_x, darwin_Y, 0.2)
+```
+
+```{r}
+test %>% count(status)
+#test %>% biserial_correlation(status)
+```
+
+```{r}
+test
+```
+
+```{r}
+drop_darwin_x <- mean_darwin_x %>% select(-starts_with(c( "mean_gmrt", "gmrt_on_paper", "air_time", "mean_acc_on_paper", "mean_acc_in_air", "mean_jerk_on_paper", "mean_speed_in_air", "max_x_extension")))
+```
+
+With this summary, we can proceed to check the correlation coefficients and see if there is presence of multicolinearity in a simple way. With this information, we can go back to our original dataset and drop all the columns that belong to a given measure (remember, in each one of the 25 experiment the same 18 measures are collected:
+
+```{r}
+correlations <- cor(drop_darwin_x)
+highCorr <- findCorrelation(correlations, cutoff = .80, names = TRUE, exact = FALSE) #exact = TRUE will cause the function to re-evaluate the average correlations at each step
 print(highCorr)
 correlations
 ```
+
+
+
+
+low variance features
+
+```{r}
+var_test_results <- function(x_data, cutoff){
+  
+    coef <- sapply(x_data, function(x) var(x)) #variance
+    status <- ifelse(coef >= cutoff, sprintf("above_%s", cutoff), sprintf("below_%s", cutoff))
+    data.frame(
+    item = names(coef),
+    variance = matrix(round(coef,3)),
+    status = as.character(status), row.names = c(names(coef))
+  )  
+}
+var_test <- var_test_results(darwin_x, 0.2)
+
+names_list_var_below_cutoff <- row.names(var_test[var_test$variance <= 0.2, ])
+```
+
+```{r}
+var_test %>% count(status)
+```
+
+
+
 point biserial correlation of mean_darwin with the target variable y:
 
 ```{r}
@@ -156,9 +174,7 @@ mean_darwin_y_corr
 ```
 
 
-```{r}
-drop_darwin_x <- darwin_x %>% select(-starts_with(c("total_time", "mean_gmrt")))
-```
+
 
 
 Is invertibility of X^t possible in the original darwin_x possible?
