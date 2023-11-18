@@ -49,10 +49,11 @@ data.frame(summary(darwin_x))
 ```
 
 The Point-Biserial Correlation Coefficient is a correlation measure of the strength of association between a continuous-level variable (ratio or interval data) and a binary variable.
+
 ```{r}
-cor_test_results <- function(x_data, cutoff){
+cor_test_results <- function(x_data, y_data, cutoff){
   
-    coef <- sapply(x_data[, -ncol(x_data)], function(x) biserial.cor(x, darwin_Y)) #apply biserial.cor function
+    coef <- sapply(x_data, function(x) biserial.cor(x, y_data)) #apply biserial.cor function
     status <- ifelse(abs(coef) >= cutoff, sprintf("above_%s", cutoff), sprintf("below_%s", cutoff))
     data.frame(
     #item = names(coef),
@@ -60,7 +61,7 @@ cor_test_results <- function(x_data, cutoff){
     status = as.character(status), row.names = c(names(coef))
   )  
 }
-test <- cor_test_results(darwin_x, 0.2)
+test <- cor_test_results(darwin_x, darwin_Y, 0.2)
 ```
 
 ```{r}
@@ -72,7 +73,7 @@ low variance features
 ```{r}
 var_test_results <- function(x_data, cutoff){
   
-    coef <- sapply(x_data[, -ncol(x_data)], function(x) var(x)) #variance
+    coef <- sapply(x_data, function(x) var(x)) #variance
     status <- ifelse(coef >= cutoff, sprintf("above_%s", cutoff), sprintf("below_%s", cutoff))
     data.frame(
     item = names(coef),
@@ -91,14 +92,14 @@ var_test %>% count(status)
 correlation between x features. Pair-wise correlations are considered. If two variables have a high correlation, the function looks at the mean absolute correlation of each variable and removes the variable with the largest mean absolute correlation.
 ```{r}
 correlations <- cor(darwin_x)
-highCorr <- findCorrelation(correlations, cutoff = .8, names = TRUE, exact = TRUE) #exact = TRUE will cause the function to re-evaluate the average correlations at each step
+highCorr <- findCorrelation(correlations, cutoff = .95, names = TRUE, exact = TRUE) #exact = TRUE will cause the function to re-evaluate the average correlations at each step
 print(highCorr)
 #new_darwin_x <- darwin_x[,!(names(darwin_x) %in% highCorr)]# eliminate by correlation
 #names_list_var_below_cutoff
 #new_darwin_x <- darwin_x[,!(names(darwin_x) %in% names_list_var_below_cutoff)]# eliminate by variance
 ```
 
-To deal with the problem of high dimensionality and correlation among features, we can summarize our current variables in a new set of 18 variables. This is possible thanks to the structure of our data, which is organized in 450 variables that belongs to the results of 18 metrics for each of the 25 different experiments:
+To deal with the problem of high dimensionality and correlation among features, we can summarize our current variables in a new set of 18 variables that contains the means of the same 18 variables observed across the 25 experiments. This is possible thanks to the structure of our data, which is organized in 450 variables that belongs to the results of 18 metrics for each of the 25 different experiments:
 
 ```{r}
 # Extract substrings excluding numbers using gsub to obtain unique column names
@@ -131,9 +132,11 @@ rowmean_df_gen <- function(input_df, unique_variable_names, max_num_cols_per_var
 }
 
 mean_darwin_x <- rowmean_df_gen(darwin_x, unique_variable_names, max_num_cols_per_variable)
-print(output_df)
+print(mean_darwin_x)
 
 ```
+
+With this summary, we can proceed to check the correlation coefficients and see if there is presence of multicolinearity in a simple way. WIth this information, we can go back to our original dataset and drop all the columns that belong to a given measure (remember, in each one of the 25 experiment the same 18 measures are collected:
 
 ```{r}
 correlations <- cor(mean_darwin_x)
@@ -141,16 +144,27 @@ highCorr <- findCorrelation(correlations, cutoff = .90, names = TRUE, exact = TR
 print(highCorr)
 correlations
 ```
+point biserial correlation of mean_darwin with the target variable y:
+
+```{r}
+mean_darwin_y_corr <- cor_test_results(mean_darwin_x, darwin_Y, 0.2)
+```
+
+```{r}
+mean_darwin_y_corr %>% count(status)
+mean_darwin_y_corr
+```
+
 
 ```{r}
 drop_darwin_x <- darwin_x %>% select(-starts_with(c("total_time", "mean_gmrt")))
 ```
 
 
-Is invertibility of X^t possible?
+Is invertibility of X^t possible in the original darwin_x possible?
 
 ```{r}
-#solve.default(t(as.matrix(mean_darwin_x)) %*% as.matrix(mean_darwin_x))
+#solve.default(t(as.matrix(drop_darwin_x)) %*% as.matrix(drop_darwin_x))
 ```
 
 
@@ -159,7 +173,7 @@ Is invertibility of X^t possible?
 
 ```{r}
 t0 <- Sys.time()
-fit.lassocv <- cv.glmnet(x=as.matrix(mean_darwin_x),y=darwin_Y,family ='binomial', nfolds = 10, aplha = 1)
+fit.lassocv <- cv.glmnet(x=as.matrix(drop_darwin_x),y=darwin_Y,family ='binomial', nfolds = 10, aplha = 1)
 t1 <- Sys.time()
 cat('\nTime elapsed: ')
 ```
@@ -219,7 +233,7 @@ lasso.bic.logistic <- function(y,x,extended=FALSE) {
 To use the BIC criteria, the parameter `extended` is set to `FALSE`.
 
 ```{r}
-fit.lassobic = lasso.bic.logistic(x = as.matrix(mean_darwin_x), y = darwin_Y, extended = FALSE)
+fit.lassobic = lasso.bic.logistic(x = as.matrix(drop_darwin_x), y = darwin_Y, extended = FALSE)
 b.lassobic = fit.lassobic$coef
 names(fit.lassobic)
 round(b.lassobic, 3)
