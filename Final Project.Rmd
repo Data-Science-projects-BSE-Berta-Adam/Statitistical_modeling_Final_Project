@@ -142,6 +142,10 @@ print(highCorr)
 correlations
 ```
 
+```{r}
+drop_darwin_x <- darwin_x %>% select(-starts_with(c("total_time", "mean_gmrt")))
+```
+
 
 Is invertibility of X^t possible?
 
@@ -227,7 +231,7 @@ sum(b.lassobic != 0)
 ```
 
 ```{r}
-fit.bayesreg <- modelSelection(y= darwin_Y ,x= as.matrix(mean_darwin_x), priorCoef=zellnerprior(tau=1), priorDelta=modelbbprior(1,1))
+fit.bayesreg <- modelSelection(y= darwin_Y ,x= as.matrix(drop_darwin_x), priorCoef=zellnerprior(tau=1), priorDelta=modelbbprior(1,1))
 ```
 
 ```{r}
