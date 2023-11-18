@@ -11,6 +11,7 @@ Preguntes:
 - Si el nostre objectiu és predir, no cal fer LASSO?
   
 Geert:
+- Podem intentar afegir alguna interacció.
 - Agafar la Mitjana per no perdre interpretabilirtt
 - Despres mirem be
 - Probar dagafar 10 components i fer aixo qe hi ha en verd a la segona part i comparar amb el que ens hagi donat a dalt
