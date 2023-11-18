@@ -38,11 +38,11 @@ darwin_x <- data.frame(darwin[, !colnames(darwin) %in% c("ID", "class")])
 
 ## Data exploration
 
-Count the number of instances of each class (dependent variable:
+Count the number of instances of each class (dependent variable). No clas imbalance:
 
 ```{r}
 ggplot(darwin, aes(x = class)) +
-  geom_bar()
+  geom_bar() 
 ```
 ```{r}
 data.frame(summary(darwin_x))
@@ -93,14 +93,60 @@ correlation between x features. Pair-wise correlations are considered. If two va
 correlations <- cor(darwin_x)
 highCorr <- findCorrelation(correlations, cutoff = .8, names = TRUE, exact = TRUE) #exact = TRUE will cause the function to re-evaluate the average correlations at each step
 print(highCorr)
-new_darwin_x <- darwin_x[,!(names(darwin_x) %in% highCorr)]# eliminate by correlation
-names_list_var_below_cutoff
+#new_darwin_x <- darwin_x[,!(names(darwin_x) %in% highCorr)]# eliminate by correlation
+#names_list_var_below_cutoff
 #new_darwin_x <- darwin_x[,!(names(darwin_x) %in% names_list_var_below_cutoff)]# eliminate by variance
 ```
+
+To deal with the problem of high dimensionality and correlation among features, we can summarize our current variables in a new set of 18 variables. This is possible thanks to the structure of our data, which is organized in 450 variables that belongs to the results of 18 metrics for each of the 25 different experiments:
+
+```{r}
+# Extract substrings excluding numbers using gsub to obtain unique column names
+unique_variable_names <- unique(
+  
+  gsub("\\d", "", names(darwin_x))
+)
+unique_variable_names
+
+```
+
+
+```{r}
+
+# create a new dataframe only containing the means of results in each metric across experiments for each individual:
+max_num_cols_per_variable <- 25 # number of experiments 
+
+rowmean_df_gen <- function(input_df, unique_variable_names, max_num_cols_per_variable) {
+  n_obs_individual <- nrow(input_df) #observations
+  num_variable_names <- length(unique_variable_names) #number of unique metrics evaluated across experiments
+
+    output_df <- data.frame(matrix(ncol = num_variable_names, nrow = n_obs_individual))
+  colnames(output_df) <- unique_variable_names #create an empty dataframe
+  
+  for (variable_name in unique_variable_names){
+    nm_vector <- paste0(variable_name, "", 1:max_num_cols_per_variable)
+    output_df[variable_name] <- rowMeans(input_df[nm_vector], na.rm = TRUE)
+  }
+  return(output_df)
+}
+
+mean_darwin_x <- rowmean_df_gen(darwin_x, unique_variable_names, max_num_cols_per_variable)
+print(output_df)
+
+```
+
+```{r}
+correlations <- cor(mean_darwin_x)
+highCorr <- findCorrelation(correlations, cutoff = .90, names = TRUE, exact = TRUE) #exact = TRUE will cause the function to re-evaluate the average correlations at each step
+print(highCorr)
+correlations
+```
+
+
 Is invertibility of X^t possible?
 
 ```{r}
-#solve.default(t(as.matrix(new_darwin_x)) %*% as.matrix(new_darwin_x))
+#solve.default(t(as.matrix(mean_darwin_x)) %*% as.matrix(mean_darwin_x))
 ```
 
 
@@ -109,7 +155,7 @@ Is invertibility of X^t possible?
 
 ```{r}
 t0 <- Sys.time()
-fit.lassocv <- cv.glmnet(x=as.matrix(new_darwin_x),y=darwin_Y,family ='binomial', nfolds = 10, aplha = 1)
+fit.lassocv <- cv.glmnet(x=as.matrix(mean_darwin_x),y=darwin_Y,family ='binomial', nfolds = 10, aplha = 1)
 t1 <- Sys.time()
 cat('\nTime elapsed: ')
 ```
@@ -169,7 +215,7 @@ lasso.bic.logistic <- function(y,x,extended=FALSE) {
 To use the BIC criteria, the parameter `extended` is set to `FALSE`.
 
 ```{r}
-fit.lassobic = lasso.bic.logistic(x = as.matrix(new_darwin_x), y = darwin_Y, extended = FALSE)
+fit.lassobic = lasso.bic.logistic(x = as.matrix(mean_darwin_x), y = darwin_Y, extended = FALSE)
 b.lassobic = fit.lassobic$coef
 names(fit.lassobic)
 round(b.lassobic, 3)
@@ -181,7 +227,7 @@ sum(b.lassobic != 0)
 ```
 
 ```{r}
-fit.bayesreg <- modelSelection(y= darwin_Y ,x= as.matrix(new_darwin_x), priorCoef=zellnerprior(tau=1), priorDelta=modelbbprior(1,1))
+fit.bayesreg <- modelSelection(y= darwin_Y ,x= as.matrix(mean_darwin_x), priorCoef=zellnerprior(tau=1), priorDelta=modelbbprior(1,1))
 ```
 
 ```{r}
@@ -193,6 +239,9 @@ head(ci.bayesreg)
 tail(ci.bayesreg)
 ci.bayesreg
 ```
+
+
+
 
 
 
