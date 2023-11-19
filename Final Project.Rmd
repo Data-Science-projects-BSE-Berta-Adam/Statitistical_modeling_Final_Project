@@ -50,6 +50,60 @@ ggplot(darwin, aes(x = class)) +
 data.frame(summary(darwin_x))
 ```
 
+<<<<<<< HEAD
+The Point-Biserial Correlation Coefficient is a correlation measure of the strength of association between a continuous-level variable (ratio or interval data) and a binary variable.
+
+```{r}
+cor_test_results <- function(x_data, y_data, cutoff){
+  
+    coef <- sapply(x_data, function(x) biserial.cor(x, y_data)) #apply biserial.cor function
+    status <- ifelse(abs(coef) >= cutoff, sprintf("above_%s", cutoff), sprintf("below_%s", cutoff))
+    data.frame(
+    #item = names(coef),
+    biserial_correlation = matrix(coef),
+    status = as.character(status), row.names = c(names(coef))
+  )  
+}
+test <- cor_test_results(darwin_x, darwin_Y, 0.2)
+```
+
+```{r}
+test %>% count(status)
+#test %>% biserial_correlation(status)
+```
+low variance features
+
+```{r}
+var_test_results <- function(x_data, cutoff){
+  
+    coef <- sapply(x_data, function(x) var(x)) #variance
+    status <- ifelse(coef >= cutoff, sprintf("above_%s", cutoff), sprintf("below_%s", cutoff))
+    data.frame(
+    item = names(coef),
+    variance = matrix(round(coef,3)),
+    status = as.character(status), row.names = c(names(coef))
+  )  
+}
+var_test <- var_test_results(darwin_x, 0.2)
+
+names_list_var_below_cutoff <- row.names(var_test[var_test$variance <= 0.2, ])
+```
+
+```{r}
+var_test %>% count(status)
+```
+correlation between x features. Pair-wise correlations are considered. If two variables have a high correlation, the function looks at the mean absolute correlation of each variable and removes the variable with the largest mean absolute correlation.
+```{r}
+correlations <- cor(darwin_x)
+highCorr <- findCorrelation(correlations, cutoff = .95, names = TRUE, exact = FALSE) #exact = TRUE will cause the function to re-evaluate the average correlations at each step
+print(highCorr)
+#new_darwin_x <- darwin_x[,!(names(darwin_x) %in% highCorr)]# eliminate by correlation
+#names_list_var_below_cutoff
+#new_darwin_x <- darwin_x[,!(names(darwin_x) %in% names_list_var_below_cutoff)]# eliminate by variance
+```
+
+=======
+>>>>>>> refs/remotes/origin/main
 To deal with the problem of high dimensionality and correlation among features, we can summarize our current variables in a new set of 18 variables that contains the means of the same 18 variables observed across the 25 experiments. This is possible thanks to the structure of our data, which is organized in 450 variables that belongs to the results of 18 metrics for each of the 25 different experiments:
 
 ```{r}
@@ -89,6 +143,9 @@ correlation between x features. Pair-wise correlations are considered. If two va
 
 ```{r}
 correlations <- cor(mean_darwin_x)
+<<<<<<< HEAD
+highCorr <- findCorrelation(correlations, cutoff = .90, names = TRUE, exact = FALSE) #exact = TRUE will cause the function to re-evaluate the average correlations at each step
+=======
 highCorr <- findCorrelation(correlations, cutoff = .95, names = TRUE, exact = TRUE)
 print(highCorr)
 ```
@@ -131,6 +188,7 @@ With this summary, we can proceed to check the correlation coefficients and see 
 ```{r}
 correlations <- cor(drop_darwin_x)
 highCorr <- findCorrelation(correlations, cutoff = .80, names = TRUE, exact = FALSE) #exact = TRUE will cause the function to re-evaluate the average correlations at each step
+>>>>>>> refs/remotes/origin/main
 print(highCorr)
 correlations
 ```
@@ -173,7 +231,18 @@ mean_darwin_y_corr %>% count(status)
 mean_darwin_y_corr
 ```
 
+VIFs are calculated by taking a predictor, and regressing it against every other predictor in the model. Eliminate those variables that are higher than 10 (or 5). Note that it should be recalculated after dropping a feature:
 
+(BERTA, ESTO ES PARA INTERPRETAR NOSOTROS) VIF range from 1 upwards. The numerical value for VIF tells you (in decimal form) what percentage the variance (i.e. the standard error squared) is inflated for each coefficient. For example, a VIF of 1.9 tells you that the variance of a particular coefficient is 90% bigger than what you would expect if there was no multicollinearity — if there was no correlation with other predictors.
+
+```{r}
+drop_mean_darwin_x <- mean_darwin_x %>% select(-starts_with(c("total_time", "mean_gmrt"))) # drop features we know are colinear from theory
+drop_mean_darwin_x <- cbind(drop_mean_darwin_x, data.frame(darwin_Y)) #create a dataframe that includes the target variable
+logistic_for_vif = glm(darwin_Y~ ., family=binomial(link=logit), data = drop_mean_darwin_x) #logistic regression
+car::vif(logistic_for_vif) #compute vif for logistic
+```
+
+#drop variables from the darwin dataset that includes variables for the 25 experiments.
 
 
 
@@ -182,7 +251,6 @@ Is invertibility of X^t possible in the original darwin_x possible?
 ```{r}
 #solve.default(t(as.matrix(drop_darwin_x)) %*% as.matrix(drop_darwin_x))
 ```
-
 
 ### LASSO-CV (Via cross-validation)
 
@@ -273,9 +341,36 @@ head(ci.bayesreg)
 tail(ci.bayesreg)
 ci.bayesreg
 ```
+*Convergence checks:*
+
+Convergence should be checked. The plot below corresponds to the trace of the number of variables selected at each MCMC iteration:
+
+```{r}
+nvars<- rowSums(fit.bayesreg$postSample)
+par(mar=c(4,5,.1,.1), cex.lab=1.3, cex.axis=1.3)
+plot(nvars, type='l', xlab='Gibbs iteration', ylab='Model size')
+```
+
+The plot decpicts the trace for $\log [p(y \mid \gamma) p(\gamma)]$ which is equal to log-posterior model probabilities $\log p(\gamma \mid y)$ up to a normalizing constant. Since these probabilities seem to stabilize, convergence is suggested.
+
+```{r}
+par(mar=c(4,5,.1,.1), cex.lab=1.3, cex.axis=1.3)
+plot(fit.bayesreg$postProb, type='l', xlab='Gibbs iteration', ylab='log p(y | gamma) + log p(gamma)')
+```
+
+```{r}
+margppest <- matrix(NA,nrow=nrow(fit.bayesreg$postSample),ncol=ncol(fit.bayesreg$postSample))
+for (j in 1:ncol(fit.bayesreg$postSample)) {
+    margppest[,j]= cumsum(fit.bayesreg$postSample[,j])/(1:nrow(fit.bayesreg$postSample))
+}
+```
 
 
+The probabilities seems to stabilize at higher iterations, suggesting convergence:
 
-
-
+```{r}
+par(mar=c(4,5,.1,.1), cex.lab=1, cex.axis=1)
+plot(margppest[,1], type='l', ylim=c(0,1), xlab='Gibbs iteration', ylab='Estimated P(gamma_j=1 | y)')
+for (j in 2:ncol(margppest)) lines(margppest[,j])
+```
 
