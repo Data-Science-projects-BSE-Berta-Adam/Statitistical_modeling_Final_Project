@@ -5,6 +5,7 @@ https://www.scitepress.org/Documents/2014/49007/
 
 Coses a fer: 
 - Passar per plagiarism
+- Llegir treball Kaggle
 
 
 Preguntes:
