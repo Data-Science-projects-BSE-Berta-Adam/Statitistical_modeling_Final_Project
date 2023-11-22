@@ -11,6 +11,7 @@ Preguntes:
 - Fer statistics (per no perdre interpretability i perque els testos mesuren el mateix), fer VIF i reduir dataset original i treballar amb dataset original o treballar amb les statistics?
 - Només treient les dues variables per interpretability la matriu ja és invertible però també hi ha multicolinearitat
 - El preprocessing diu que el posem a l’apartat de dataset per`o demanar si ho podem fe aquí ja que est`a enfocat a la viabilitat de les t`ecniques amb regression i no es seguirà el mateix preprocessing per la segona part
+- Hi ha variables amb low variance
 
 
   
