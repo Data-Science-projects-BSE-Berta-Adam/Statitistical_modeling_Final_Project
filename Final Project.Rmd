@@ -345,8 +345,17 @@ plot(fit.lassocv)
 
 ```{r}
 b.lassocv = as.vector(coef(fit.lassocv, s='lambda.min'))
-sum(b.lassocv != 0)
+sum(b.lassocv[-1] != 0)
 ```
+
+D'aquí faltaria treure la intercept si volem: (Del codi de dalt ja l'he tret)
+
+```{r}
+coef(fit.lassocv, s='lambda.min')
+```
+
+
+
 #### Model performance
 
 We get the in-sample auc for the LASSO-CV model:
@@ -419,11 +428,24 @@ fit.ridge= cv.glmnet(x=as.matrix(drop_darwin_x), y=darwin_Y,family ='binomial', 
 fit.ridge
 ```
 
+Aquí si poso el codi que ara està amb verd no se'm treu la intercept: 
+
 ```{r}
 b.rigde <- as.vector(coef(fit.ridge, s='lambda.min'))
 names(b.rigde) <- c('intercept',colnames(drop_darwin_x))
 length(b.rigde[b.rigde!=0])
+#length(b.rigde[b.rigde[-1]!=0])
 ```
+
+Aquí si poso el codi que ara està amb verd no se'm treu la intercept: 
+
+```{r}
+b.rigde[b.rigde!=0]
+#b.rigde[b.rigde[-1]!=0]
+```
+
+
+
 #### Model performance
 
 In-sample predictions
@@ -492,8 +514,13 @@ names(fit.lassobic)
 The number of non-zero coefficients for LASSO-BIC corresponds to:
 
 ```{r}
-sum(b.lassobic != 0)
+sum(fit.lassobic$coef[-1]!=0)
 ```
+
+```{r}
+b.lassobic[b.lassobic != 0]
+```
+
 #### Model performance
 
 We get the in-sample auc for the LASSO-BIC model:
@@ -524,6 +551,8 @@ ci.bayesreg[,4] <- round(ci.bayesreg[,4], 4)
 head(ci.bayesreg)
 tail(ci.bayesreg)
 ```
+
+
 *Convergence checks:*
 
 Convergence should be checked. The plot below corresponds to the trace of the number of variables selected at each MCMC iteration:
