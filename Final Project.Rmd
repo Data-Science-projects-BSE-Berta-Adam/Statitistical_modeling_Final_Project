@@ -239,14 +239,14 @@ mcfadden_pseudo_r2 <- function(pred_model,pred_0, y){
 }
 ```
 
-FPR
+FNR
 
 ```{r}
-FPR <-function(proba.pred,truth){
-  class.pred <- as.numeric(proba.pred>0.5)
-  conf <- table(truth,class.pred)
-  FPR <- conf[1,2]/sum(conf[1,1],conf[1,2])
-  return(FPR)
+FNR <- function(proba.pred, truth){
+  class.pred <- as.numeric(proba.pred > 0.5)
+  conf <- table(truth, class.pred)
+  FNR <- conf[2, 1] / sum(conf[2, 1], conf[2, 2])
+  return(FNR)
 }
 ```
 
@@ -325,8 +325,17 @@ plot(fit.lassocv)
 
 ```{r}
 b.lassocv = as.vector(coef(fit.lassocv, s='lambda.min'))
-sum(b.lassocv != 0)
+sum(b.lassocv[-1] != 0)
 ```
+
+```{r}
+rownames(coef(fit.lassocv, s = 'lambda.min'))[coef(fit.lassocv, s = 'lambda.min')[,1]!= 0]
+```
+```{r}
+colnames(as.matrix(functional_darwin[,b.lassocv!=0]))
+```
+
+
 #### Model performance
 
 We get the in-sample auc for the LASSO-CV model:
@@ -347,7 +356,7 @@ cv.pred.lasso.cv <- kfoldCV.lasso.logistic(y=darwin_Y,x=as.matrix(functional_dar
 ```
 
 ```{r}
-FPR(cv.pred.lasso.cv$pred,darwin_Y)
+FNR(cv.pred.lasso.cv$pred,darwin_Y)
 ```
 
 ```{r}
@@ -410,8 +419,9 @@ fit.ridge
 ```{r}
 b.rigde <- as.vector(coef(fit.ridge, s='lambda.min'))
 names(b.rigde) <- c('intercept',colnames(functional_darwin))
-length(b.rigde[b.rigde!=0])
+sum(b.rigde[-1]!=0)
 ```
+
 #### Model performance
 
 In-sample predictions
@@ -431,7 +441,7 @@ cv.ridge= kfoldCV.ridge(x=as.matrix(functional_darwin), y=darwin_Y,K=10,seed=1,c
 ```
 
 ```{r}
-FPR(cv.ridge$pred,darwin_Y)
+FNR(cv.ridge$pred,darwin_Y)
 ```
 
 ```{r}
@@ -489,8 +499,11 @@ names(fit.lassobic)
 The number of non-zero coefficients for LASSO-BIC corresponds to:
 
 ```{r}
-sum(b.lassobic != 0)
-```
+sum(b.lassobic[-1] != 0)
+````
+
+
+
 #### Model performance
 
 We get the in-sample auc for the LASSO-BIC model:
@@ -508,7 +521,7 @@ cv.pred.lasso.bic <- kfoldCV.lasso.logistic(y=darwin_Y,x=as.matrix(drop_darwin_x
 ```
 
 ```{r}
-FPR(cv.pred.lasso.bic$pred,darwin_Y)
+FNR(cv.pred.lasso.bic$pred,darwin_Y)
 ```
 
 ```{r}
