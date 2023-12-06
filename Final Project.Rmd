@@ -28,10 +28,15 @@ set.seed(1234)
 
 ```{r}
 darwin <- read.csv("DARWIN.csv", sep = ",", header = TRUE)
+darwin <- darwin[,-1]
+#darwin_Y <- as.numeric(darwin$class %in% c("P")) #generate a dichotomous variable
+#darwin[,"class"] <- darwin_Y
+#darwin <- data.frame(scale(darwin,center=TRUE))
 ```
 
 ```{r}
 darwin_Y <- as.numeric(darwin$class %in% c("P")) #generate a dichotomous variable
+#darwin_Y <- as.numeric(darwin$class)
 darwin_x <- data.frame(darwin[, !colnames(darwin) %in% c("ID", "class")])
 # darwin_x <- scale(darwin_x)
 ```
@@ -44,30 +49,7 @@ Count the number of instances of each class (dependent variable). No clas imbala
 ggplot(darwin, aes(x = class)) +
   geom_bar() 
 ```
-```{r}
-data.frame(summary(darwin_x))
-```
 
-The Point-Biserial Correlation Coefficient is a correlation measure of the strength of association between a continuous-level variable (ratio or interval data) and a binary variable.
-
-```{r}
-cor_test_results <- function(x_data, y_data, cutoff){
-  
-    coef <- sapply(x_data, function(x) biserial.cor(x, y_data)) #apply biserial.cor function
-    status <- ifelse(abs(coef) >= cutoff, sprintf("above_%s", cutoff), sprintf("below_%s", cutoff))
-    data.frame(
-    #item = names(coef),
-    biserial_correlation = matrix(coef),
-    status = as.character(status), row.names = c(names(coef))
-  )  
-}
-test <- cor_test_results(darwin_x, darwin_Y, 0.2)
-```
-
-```{r}
-test %>% count(status)
-#test %>% biserial_correlation(status)
-```
 low variance features
 
 ```{r}
@@ -89,10 +71,10 @@ names_list_var_below_cutoff <- row.names(var_test[var_test$variance <= 0.2, ])
 ```{r}
 var_test %>% count(status)
 ```
-correlation between x features. Pair-wise correlations are considered. If two variables have a high correlation, the function looks at the mean absolute correlation of each variable and removes the variable with the largest mean absolute correlation.
+correlation between x features. 
 ```{r}
 correlations <- cor(darwin_x)
-highCorr <- findCorrelation(correlations, cutoff = .95, names = TRUE, exact = FALSE) #exact = TRUE will cause the function to re-evaluate the average correlations at each step
+highCorr <- findCorrelation(correlations, cutoff = .95, names = TRUE, exact = FALSE)  
 print(highCorr)
 #new_darwin_x <- darwin_x[,!(names(darwin_x) %in% highCorr)]# eliminate by correlation
 #names_list_var_below_cutoff
@@ -100,7 +82,6 @@ print(highCorr)
 ```
 
 To deal with the problem of high correlation among features, we can transform the most correlated pair of tests in a new set of variables (differences and means) bewteen the variables present in both sets:
-
 
 drop variables from all tests that we know from theory that have linear dependency ("total_time", "mean_gmrt):
 
@@ -204,7 +185,6 @@ mean_diff_darwin_x <- cbind(mean_diff_darwin_x, input_df)
 return(mean_diff_darwin_x) #return output
 
 }
-##############################################3
 
 ```
 
@@ -212,7 +192,6 @@ return(mean_diff_darwin_x) #return output
 
 ```{r}
 list_of_pairs <- list(c(2,3), c(4,5), c(8,9), c(10,12), c(11,13), c(15,16))
-list_of_pairs
 
 functional_darwin <- transformed_darwin_generator(drop_darwin_x, unique_variable_names, list_of_pairs, diff = TRUE)
 ```
@@ -225,8 +204,8 @@ dataframe_subsets <- vector("list", 25)  # Assuming you want subsets for numbers
 
 #Group columns by their endings
 for (test in 1:25) {
-  cols <- grep(paste0("\\D", test, "$"), names(drop_darwin_x))
-  dataframe_subsets[[test]] <- drop_darwin_x[, cols, drop = FALSE]
+  cols <- grep(paste0("\\D", test, "$"), names(functional_darwin))
+  dataframe_subsets[[test]] <- functional_darwin[, cols, drop = FALSE]
 }
 
 dataframe_subsets[[1]]
@@ -253,7 +232,7 @@ Is invertibility of X^t possible in the original darwin_x possible?
 mcfadden_pseudo_r2
 
 ```{r}
-mcfadden_pseudo_r2 <- function(pred_model,pred_0){
+mcfadden_pseudo_r2 <- function(pred_model,pred_0, y){
   loglike_model <- sum(y*log(pred_model)+(1-y)*log(1-pred_model), na.rm = TRUE)
   loglike_0 <- sum(y*log(pred_0)+(1-y)*log(1-pred_0), na.rm = TRUE)
   return(1-loglike_model/loglike_0)
@@ -324,6 +303,7 @@ kfoldCV.lasso.logistic <- function(y,x,K=10,seed,criterion='cv') {
 
 
 ```{r}
+set.seed(1234)
 t0 <- Sys.time()
 fit.lassocv <- cv.glmnet(x=as.matrix(functional_darwin),y=darwin_Y,family ='binomial', nfolds = 10, aplha = 1)
 t1 <- Sys.time()
@@ -345,17 +325,8 @@ plot(fit.lassocv)
 
 ```{r}
 b.lassocv = as.vector(coef(fit.lassocv, s='lambda.min'))
-sum(b.lassocv[-1] != 0)
+sum(b.lassocv != 0)
 ```
-
-D'aquí faltaria treure la intercept si volem: (Del codi de dalt ja l'he tret)
-
-```{r}
-coef(fit.lassocv, s='lambda.min')
-```
-
-
-
 #### Model performance
 
 We get the in-sample auc for the LASSO-CV model:
@@ -373,6 +344,14 @@ cv.pred.lasso.cv <- kfoldCV.lasso.logistic(y=darwin_Y,x=as.matrix(functional_dar
 
 ```{r}
 (auc.lassocv.test<- pROC::auc(darwin_Y,cv.pred.lasso.cv$pred))
+```
+
+```{r}
+FPR(cv.pred.lasso.cv$pred,darwin_Y)
+```
+
+```{r}
+mcfadden_pseudo_r2(cv.pred.lasso.cv$pred,cv.pred.lasso.cv$pred_0, darwin_Y)
 ```
 
 
@@ -424,28 +403,15 @@ kfoldCV.ridge <- function(y,x,K=10,seed,criterion='cv') {
 
 
 ```{r}
-fit.ridge= cv.glmnet(x=as.matrix(drop_darwin_x), y=darwin_Y,family ='binomial', alpha = 0, nfolds=10)
+fit.ridge= cv.glmnet(x=as.matrix(functional_darwin), y=darwin_Y,family ='binomial', alpha = 0, nfolds=10)
 fit.ridge
 ```
 
-Aquí si poso el codi que ara està amb verd no se'm treu la intercept: 
-
 ```{r}
 b.rigde <- as.vector(coef(fit.ridge, s='lambda.min'))
-names(b.rigde) <- c('intercept',colnames(drop_darwin_x))
+names(b.rigde) <- c('intercept',colnames(functional_darwin))
 length(b.rigde[b.rigde!=0])
-#length(b.rigde[b.rigde[-1]!=0])
 ```
-
-Aquí si poso el codi que ara està amb verd no se'm treu la intercept: 
-
-```{r}
-b.rigde[b.rigde!=0]
-#b.rigde[b.rigde[-1]!=0]
-```
-
-
-
 #### Model performance
 
 In-sample predictions
@@ -457,12 +423,21 @@ In-sample predictions
 
 Out-sample prediction
 ```{r}
-cv.ridge= kfoldCV.ridge(x=as.matrix(drop_darwin_x), y=darwin_Y,K=10,seed=1,criterion="cv")
+cv.ridge= kfoldCV.ridge(x=as.matrix(functional_darwin), y=darwin_Y,K=10,seed=1,criterion="cv")
 ```
 
 ```{r}
 (auc.ridge.test<- pROC::auc(darwin_Y,cv.ridge$pred))
 ```
+
+```{r}
+FPR(cv.ridge$pred,darwin_Y)
+```
+
+```{r}
+#mcfadden_pseudo_r2(cv.ridge$pred,cv.ridge$pred, darwin_Y)
+```
+
 
 
 
@@ -514,13 +489,8 @@ names(fit.lassobic)
 The number of non-zero coefficients for LASSO-BIC corresponds to:
 
 ```{r}
-sum(fit.lassobic$coef[-1]!=0)
+sum(b.lassobic != 0)
 ```
-
-```{r}
-b.lassobic[b.lassobic != 0]
-```
-
 #### Model performance
 
 We get the in-sample auc for the LASSO-BIC model:
@@ -537,11 +507,50 @@ cv.pred.lasso.bic <- kfoldCV.lasso.logistic(y=darwin_Y,x=as.matrix(drop_darwin_x
 (auc.lassoBIC.crossvalidated <- pROC::auc(darwin_Y,cv.pred.lasso.bic$pred))
 ```
 
+```{r}
+FPR(cv.pred.lasso.bic$pred,darwin_Y)
+```
+
+```{r}
+mcfadden_pseudo_r2(cv.pred.lasso.bic$pred,cv.pred.lasso.bic$pred_0, darwin_Y)
+```
+
+
+
 
 ### Bayes
+
+
 ```{r}
-fit.bayesreg <- modelSelection(y= darwin_Y ,x= as.matrix(functional_darwin), priorCoef=zellnerprior(tau=1), priorDelta=modelbbprior(1,1))
+system.time(fit.bayesreg <- modelSelection(darwin_Y ~.,data = data.frame(functional_darwin), priorCoef=groupzellnerprior(tau=1), family = "binomial", priorGroup= groupzellnerprior(taustd=1), niter = 8000), priorDelta=modelbbprior(1,1)) #BMA with Laplace approx for marginal likelihood, MCMC for parameters
+
+
+
+
 ```
+
+*Convergence checks:*
+
+Convergence should be checked. The plot below corresponds to the trace of the number of variables selected at each MCMC iteration:
+
+```{r}
+margppest= matrix(NA,nrow=nrow(fit.bayesreg$postSample),ncol=ncol(fit.bayesreg$postSample))
+for (j in 1:ncol(fit.bayesreg$postSample)) {
+    margppest[,j]= cumsum(fit.bayesreg$postSample[,j])/(1:nrow(fit.bayesreg$postSample))
+}
+
+par(mar=c(4,5,.1,.1), cex.lab=1, cex.axis=1)
+plot(margppest[,1], type='l', ylim=c(0,1), xlab='Gibbs iteration', ylab='Estimated P(gamma_j=1 | y)')
+for (j in 2:ncol(margppest)) lines(margppest[,j])
+```
+
+The most the probable models are:
+```{r}
+head(postProb(fit.bayesreg),10)
+```
+
+
+
 
 ```{r}
 ci.bayesreg <- coef(fit.bayesreg)[-c(1,nrow(coef(fit.bayesreg))),]
@@ -552,37 +561,8 @@ head(ci.bayesreg)
 tail(ci.bayesreg)
 ```
 
-
-*Convergence checks:*
-
-Convergence should be checked. The plot below corresponds to the trace of the number of variables selected at each MCMC iteration:
-
 ```{r}
-nvars<- rowSums(fit.bayesreg$postSample)
-par(mar=c(4,5,.1,.1), cex.lab=1.3, cex.axis=1.3)
-plot(nvars, type='l', xlab='Gibbs iteration', ylab='Model size')
+coef(fit.bayesreg)[order(coef(fit.bayesreg)[,4], decreasing = TRUE),]
 ```
 
-The plot decpicts the trace for $\log [p(y \mid \gamma) p(\gamma)]$ which is equal to log-posterior model probabilities $\log p(\gamma \mid y)$ up to a normalizing constant. Since these probabilities seem to stabilize, convergence is suggested.
-
-```{r}
-par(mar=c(4,5,.1,.1), cex.lab=1.3, cex.axis=1.3)
-plot(fit.bayesreg$postProb, type='l', xlab='Gibbs iteration', ylab='log p(y | gamma) + log p(gamma)')
-```
-
-```{r}
-margppest <- matrix(NA,nrow=nrow(fit.bayesreg$postSample),ncol=ncol(fit.bayesreg$postSample))
-for (j in 1:ncol(fit.bayesreg$postSample)) {
-    margppest[,j]= cumsum(fit.bayesreg$postSample[,j])/(1:nrow(fit.bayesreg$postSample))
-}
-```
-
-
-The probabilities seems to stabilize at higher iterations, suggesting convergence:
-
-```{r}
-par(mar=c(4,5,.1,.1), cex.lab=1, cex.axis=1)
-plot(margppest[,1], type='l', ylim=c(0,1), xlab='Gibbs iteration', ylab='Estimated P(gamma_j=1 | y)')
-for (j in 2:ncol(margppest)) lines(margppest[,j])
-```
 
