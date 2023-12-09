@@ -10,4 +10,5 @@ Geert:
   
 Coses a fer: 
 - Passar per plagiarism
-- Llegir treball Kaggle
+- Llegir treball Kaggle: https://www.kaggle.com/code/andy120198/alzheimer-s-disease-auc-roc-0-93
+  
