@@ -204,11 +204,41 @@ dataframe_subsets <- vector("list", 25)  # Assuming you want subsets for numbers
 
 #Group columns by their endings
 for (test in 1:25) {
-  cols <- grep(paste0("\\D", test, "$"), names(functional_darwin))
-  dataframe_subsets[[test]] <- functional_darwin[, cols, drop = FALSE]
+  cols <- grep(paste0("\\D", test, "$"), names(drop_darwin_x))
+  dataframe_subsets[[test]] <- drop_darwin_x[, cols, drop = FALSE]
 }
 
 dataframe_subsets[[1]]
+```
+
+#Perform individual test checks (PROVISIONAL!!!!!)
+
+```{r}
+individual_test_performance <- function(x, y){
+    indv_test_performance.cv <- data.frame(matrix(ncol = 2, nrow = 25))
+  for (i in 1:25){
+    sub_cv.pred.mle<- kfoldCV.mle.logistic(y=y, x=data.frame(x[[i]]),K=10,seed=1)
+    sub_cv.pred.lasso <- kfoldCV.lasso.logistic(y=y,x=as.matrix(x[[i]]),K=10,seed=1)
+    indv_test_performance.cv[i,1] <- as.numeric(pROC::auc(y,sub_cv.pred.lasso$pred)) #lasso
+    indv_test_performance.cv[i,2] <- as.numeric(pROC::auc(y,sub_cv.pred.mle$pred)) #mle
+  }
+  return(indv_test_performance.cv)
+}
+
+test<- individual_test_performance(dataframe_subsets, darwin_Y)
+```
+
+
+```{r}
+sub_cv.pred.mle= kfoldCV.lasso.logistic(y=darwin_Y,x=as.matrix(dataframe_subsets[[13]]),K=10,seed=1)
+```
+
+```{r}
+(auc.mle.cv <- pROC::auc(darwin_Y,sub_cv.pred.mle$pred))
+```
+
+```{r}
+FNR(sub_cv.pred.mle$pred,darwin_Y)
 ```
 
 ```{r}
@@ -535,10 +565,7 @@ mcfadden_pseudo_r2(cv.pred.lasso.bic$pred,cv.pred.lasso.bic$pred_0, darwin_Y)
 
 
 ```{r}
-system.time(fit.bayesreg <- modelSelection(darwin_Y ~.,data = data.frame(functional_darwin), priorCoef=groupzellnerprior(tau=1), family = "binomial", priorGroup= groupzellnerprior(taustd=1), niter = 8000), priorDelta=modelbbprior(1,1)) #BMA with Laplace approx for marginal likelihood, MCMC for parameters
-
-
-
+fit.bayesreg <- modelSelection(darwin_Y ~.,data = data.frame(scale(functional_darwin)), priorCoef=momprior(tau=1), family = "binomial", priorGroup= momprior(tau=1), niter = 5000) #BMA with Laplace approx for marginal likelihood, MCMC for parameters
 
 ```
 
@@ -577,5 +604,234 @@ tail(ci.bayesreg)
 ```{r}
 coef(fit.bayesreg)[order(coef(fit.bayesreg)[,4], decreasing = TRUE),]
 ```
+
+#Sparse PCA
+
+```{r}
+library(sparsepca)
+
+spca.results <- spca(functional_darwin, center = TRUE, scale = TRUE,  alpha = 1e-04, beta = 1e-04, tol=1e-05, max_iter = 1000)
+```
+
+```{r}
+# the eigenvectors can be visualized as eigenfaces, e.g., the first eigenvector (eigenface) is displayed as follows
+#summary(spca.results) 
+
+### Visualization of variance explained
+var_explained <- spca.results$eigenvalues / sum(spca.results$eigenvalues)
+
+summary(spca.results)
+
+
+qplot(c(1:length(var_explained)), var_explained) + 
+  geom_line() + 
+  geom_point(size=0)+
+  xlab("Principal Component") + 
+  xlim(1,25) +
+  ylab("Variance Explained") +
+  ggtitle("Scree Plot") +
+  ylim(0, 0.120)
+
+pca_darwin_x <- spca.results$scores[, 1:5]
+full_darwin_x_pca <- spca.results$scores[, 1:173]
+```
+
+```{r}
+logistic_model <- glm(darwin_Y ~., data = data.frame(pca_darwin_x), family = binomial)
+# Summarize the model
+summary(logistic_model)
+# Make predictions
+probabilities <- logistic_model %>% predict(data.frame(pca_darwin_x), type = "response")
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+# Model accuracy
+mean(predicted.classes == darwin_Y)
+```
+
+```{r}
+HDRFA::PCA_FN(full_darwin_x_pca, rmax = length(full_darwin_x_pca))
+```
+
+
+
+```{r}
+kfoldCV.mle.logistic <- function(y,x,K=10,seed) {
+## Perform K-fold cross-validation for least-squares regression estimate
+## Input
+## - y: response
+## - x: data.frame with predictors, intercept should not be present
+## - K: number of folds in K-fold cross-validation
+## - seed: random number generator seed (optional)
+## Output
+## - pred: cross-validated predictions for y
+## - ssr: residual sum of squares, sum((y-pred)^2)
+  if (!missing(seed)) set.seed(seed)
+  subset <- rep(1:K,ceiling(nrow(x)/K))[1:nrow(x)]
+  subset <- sample(subset,size=nrow(x),replace=FALSE)
+  pred <- double(nrow(x))
+  pred_0 <- double(nrow(x))
+  if (ncol(x)>0) {
+    for (k in 1:K) {
+      sel <- subset==k
+      fit <- glm(y[!sel] ~ ., data=x[!sel,,drop=FALSE], family = 'binomial')
+      pred[sel] <- predict(fit, newdata=x[sel,,drop=FALSE],type='response')
+      pred_0[sel] <- mean(y[!sel])
+    }
+  } else {
+    for (k in 1:K) {
+      sel <- subset==k
+      pred[sel] <- mean(y[!sel],na.rm=TRUE)
+    }
+  }
+  return(list(pred=pred, pred_0 =pred_0, ssr=sum((pred-y)^2,na.rm=TRUE)))
+}
+```
+
+
+```{r}
+cv.pred.mle= kfoldCV.mle.logistic(y=darwin_Y,x=data.frame(pca_darwin_x),K=10,seed=1)
+```
+
+```{r}
+(auc.mle.cv <- pROC::auc(darwin_Y,cv.pred.mle$pred))
+```
+
+```{r}
+FNR(cv.pred.mle$pred,darwin_Y)
+```
+
+
+# Random Forest clustering 
+
+
+```{r}
+library(rsample)      # data splitting 
+library(randomForest) # basic implementation
+library(ranger)       # a faster implementation of randomForest
+library(caret)        # an aggregator package for performing many machine learning models
+library(h2o)          # an extremely fast java-based platform
+
+standardized_functional_darwin <- scale(functional_darwin)
+```
+
+```{r}
+combined_data <- data.frame(standardized_functional_darwin, darwin_Y)
+```
+
+```{r}
+  
+# Loading package 
+library(caTools) 
+library(randomForest) 
+
+```
+
+```{r}
+set.seed(120)  # Setting seed 
+
+# Generating random indices for train and test
+train_indices <- sample(nrow(combined_data), 0.8 * nrow(combined_data))  # 70% train
+train <- combined_data[train_indices, ]
+test <- combined_data[-train_indices, ]
+
+# Separating predictors (x) and target variable (y) for training
+x_train <- subset(train, select = -darwin_Y)
+y_train <- train$darwin_Y
+```
+
+```{r}
+library(randomForest)
+
+# Fitting a random forest model
+model <- randomForest(x = x_train, y = as.factor(y_train), ntree = 500)
+
+# Summary of the model
+print(model)
+```
+
+# Making predictions on test data (assuming you have test data prepared similarly)
+predictions <- predict(model, test)
+```{r}
+predicted_probs <- predict(model, test, type = "prob")[, 2]  # Extracting probabilities for class 1
+
+# Compute AUC
+roc_obj <- pROC::roc(test$darwin_Y, predicted_probs)
+auc <- pROC::auc(roc_obj)
+print(paste("AUC:", auc))
+
+# Compute False Negative Rate (FNR)
+threshold <- 0.5  # Threshold for class prediction
+predictions <- ifelse(predicted_probs > threshold, 1, 0)
+conf_matrix <- table(Actual = test$darwin_Y, Predicted = predictions)
+fnr <- conf_matrix[2, 1] / sum(conf_matrix[2, ])
+print(paste("FNR:", fnr))
+```
+
+```{r}
+# Get feature importance
+model <- randomForest(x = x_train, y = as.factor(y_train), ntree = 500)
+feature_importance <- randomForest::importance(model)
+sorted_importance <- feature_importance[order(-feature_importance[, "MeanDecreaseGini"]), ]
+print(sorted_importance)
+```
+
+
+```{r}
+kfoldCV.randomforest.logistic <- function(y,x,K=10,seed) {
+## Perform K-fold cross-validation for least-squares regression estimate
+## Input
+## - y: response
+## - x: data.frame with predictors, intercept should not be present
+## - K: number of folds in K-fold cross-validation
+## - seed: random number generator seed (optional)
+## Output
+## - pred: cross-validated predictions for y
+## - ssr: residual sum of squares, sum((y-pred)^2)
+  if (!missing(seed)) set.seed(seed)
+  subset <- rep(1:K,ceiling(nrow(x)/K))[1:nrow(x)]
+  subset <- sample(subset,size=nrow(x),replace=FALSE)
+  pred <- double(nrow(x))
+  pred_0 <- double(nrow(x))
+  if (ncol(x)>0) {
+    for (k in 1:K) {
+      sel <- subset==k
+      #fit <- glm(y[!sel] ~ ., data=x[!sel,,drop=FALSE], family = 'binomial')
+      fit <- randomForest(x = x[!sel,,drop=FALSE], y = as.factor(y[!sel]), ntree = 500)
+      pred[sel] <- predict(fit, newdata=x[sel,,drop=FALSE],type='response')
+      pred_0[sel] <- mean(y[!sel])
+    }
+  } else {
+    for (k in 1:K) {
+      sel <- subset==k
+      pred[sel] <- mean(y[!sel],na.rm=TRUE)
+    }
+  }
+  return(list(pred=pred, pred_0 =pred_0, ssr=sum((pred-y)^2,na.rm=TRUE)))
+}
+```
+
+#Random Forest CV
+
+```{r}
+cv.pred.RandomForest <- kfoldCV.randomforest.logistic(y=darwin_Y,x=data.frame(functional_darwin),K=10,seed=1)
+```
+
+Out-sample metrics
+
+```{r}
+(auc.randomForest.cv <- pROC::auc(darwin_Y,cv.pred.RandomForest$pred))
+```
+
+```{r}
+cv.pred.RandomForest$pred -1
+FNR(cv.pred.RandomForest$pred -1,darwin_Y)
+```
+
+
+
+
+
+
+
+
 
 
