@@ -1,0 +1,946 @@
+---
+title: "Final Project's code"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+# Import libraries and load DARWIN dataset
+
+```{r}
+library(glmnet)
+library(sigmoid)
+library(caret)
+library(MASS)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(rstanarm) 
+library(mombf) 
+library(ltm)
+library(Hmisc) 
+library(readr)
+library(tidyverse)  
+library(cluster) 
+library(factoextra) 
+library(mclust) 
+library(fpc) 
+library(stringr)
+set.seed(1234)
+```
+
+```{r}
+darwin <- read.csv("DARWIN.csv", sep = ",", header = TRUE)
+darwin <- darwin[,-1]
+```
+
+```{r}
+darwin_Y <- as.numeric(darwin$class %in% c("P")) #generate a dichotomous variable
+darwin_x <- data.frame(darwin[, !colnames(darwin) %in% c("ID", "class")])
+```
+
+## Data exploration
+
+Count the number of instances of each class (dependent variable). No clas imbalance:
+
+```{r}
+ggplot(darwin, aes(x = class)) +
+  geom_bar() 
+```
+
+low variance features.
+```{r}
+var_test_results <- function(x_data, cutoff){
+  
+    coef <- sapply(x_data, function(x) var(x)) #variance
+    status <- ifelse(coef >= cutoff, sprintf("above_%s", cutoff),
+                     sprintf("below_%s", cutoff))
+    data.frame(
+    item = names(coef),
+    variance = matrix(round(coef,3)),
+    status = as.character(status), row.names = c(names(coef))
+  )  
+}
+var_test <- var_test_results(darwin_x, 0.2)
+
+names_list_var_below_cutoff <- row.names(var_test[var_test$variance <= 0.2, ])
+```
+
+```{r}
+var_test %>% count(status)
+```
+correlation between x features. 
+```{r}
+correlations <- cor(darwin_x)
+highCorr <- findCorrelation(correlations, cutoff = .90, names = TRUE, exact = FALSE)  
+length(highCorr)
+
+#new_darwin_x <- darwin_x[,!(names(darwin_x) %in% highCorr)]# eliminate by correlation
+#names_list_var_below_cutoff
+# eliminate by variance
+#new_darwin_x <- darwin_x[,!(names(darwin_x) %in% names_list_var_below_cutoff)]
+```
+
+
+```{r}
+correlations <- cor(functional_darwin)
+highCorr <- findCorrelation(correlations, cutoff = .90, names = TRUE, exact = FALSE)  
+length(highCorr)
+```
+
+## Data manipulation
+
+To deal with the problem of high correlation among features, we can transform the most correlated pair of tests in a new set of variables (differences and means) between the variables present in both sets:
+
+drop variables from all tests that we know from theory that have linear dependency ("total_time", "mean_gmrt):
+
+```{r}
+drop_darwin_x <- darwin_x %>% dplyr::select(-starts_with(c("total_time", "mean_gmrt")))
+```
+
+Get the names of the metrics measured in all tests:
+
+```{r}
+# Extract substrings excluding numbers using gsub to obtain unique column names
+unique_variable_names <- unique(
+  
+  gsub("\\d", "", names(drop_darwin_x))
+)
+unique_variable_names
+
+```
+
+Function to transform pairs of tests by taking variables and computing their differences and means to deal with colinearity:
+
+```{r}
+transformed_darwin_generator <- function(input_df, unique_variable_names,
+                                         list_of_pairs, diff = TRUE) {
+  stopifnot(is.logical(diff), !is.na(diff)) #warning if diff not boolean
+  
+
+  rowmean_diff_df_gen <- function(test_pairs) {
+    test_1 <- test_pairs[1] #element 1 of the vector with a pair
+    test_2 <- test_pairs[2] #element 2 of the vector with a pair
+  
+    n_obs_individual <- nrow(input_df) #observations
+    #number of unique metrics evaluated across experiments
+    num_variable_names <- length(unique_variable_names) 
+
+  
+    output_df_1 <- data.frame(matrix(ncol = num_variable_names, nrow = n_obs_individual))
+    colnames(output_df_1) <- unique_variable_names #create an empty dataframe
+  
+    output_df_2 <- data.frame(matrix(ncol = num_variable_names, nrow = n_obs_individual))
+    colnames(output_df_2) <- unique_variable_names #create an empty dataframe
+  
+  # compute averages 
+    for (variable_name in unique_variable_names){
+      nm_vector <- paste0(variable_name, "", c(test_1, test_2))
+      output_df_1[variable_name] <- rowMeans(input_df[nm_vector], na.rm = TRUE)
+    }
+    
+    mean_names_test_1_2 <- paste0("mean_", unique_variable_names,
+                                  "_" ,test_1, "_", test_2)
+    colnames(output_df_1) <- mean_names_test_1_2
+  
+    # compute differences
+    if (diff == TRUE){
+      for (variable_name in unique_variable_names){
+        nm_vector1 <- paste0(variable_name, "", c(test_1))
+        nm_vector2 <- paste0(variable_name, "", c(test_2))
+        output_df_2[variable_name] <- input_df[nm_vector1] - input_df[nm_vector2]
+      }
+    
+  
+    diff_names_test_1_2 <- paste0("diff_", unique_variable_names,
+                                  "_" ,test_1, "_", test_2)
+    colnames(output_df_2) <- diff_names_test_1_2
+    
+    # merge both metrics
+    
+    output_df <- cbind(output_df_1, output_df_2)
+    return(output_df)
+    
+    } else {
+      output_df <- output_df_1
+      return(output_df)
+    }
+  
+    # merge both metrics
+  
+    output_df <- cbind(output_df_1, output_df_2)
+  
+    return(output_df)
+  }
+  ### now create the final dataset with the function we created inside this function
+
+  #iterate over list of pairs to generate new transformed columns
+  mean_diff_darwin_x <- data.frame() #empty dataframe to pour values into
+
+    for (pair in list_of_pairs) {
+      output <- rowmean_diff_df_gen(pair)
+      mean_diff_darwin_x <- data.frame(append(output, mean_diff_darwin_x))
+    }
+
+  # merge with original dataset darwin_x and remove processed columns 
+
+  complete_vector <-c()
+
+  for (element in unlist(list_of_pairs)){
+    string_vector <- paste0(unique_variable_names, element)
+    complete_vector <- append(complete_vector, string_vector)
+  }
+#remove original processed columns to avoid duplicity
+input_df <- input_df %>% dplyr::select(-ends_with(complete_vector)) 
+
+mean_diff_darwin_x <- cbind(mean_diff_darwin_x, input_df)
+
+return(mean_diff_darwin_x) #return output
+
+}
+```
+
+Create a list with vectors including the pairs of tests that contain very similar information which should be transformed into means and differences
+
+```{r}
+list_of_pairs <- list(c(2,3), c(4,5), c(8,9), c(10,12), c(11,13), c(15,16))
+
+functional_darwin <- transformed_darwin_generator(drop_darwin_x,
+                                  unique_variable_names, list_of_pairs, diff = TRUE)
+```
+
+Standardize the created dataframe functional_darwin
+```{r}
+standardized_functional_darwin <- scale(functional_darwin, scale = TRUE, center = TRUE)
+```
+
+# Regression
+
+## Performance metrics 
+
+```{r}
+FNR <- function(proba.pred, truth){
+  class.pred <- as.numeric(proba.pred > 0.5)
+  conf <- table(truth, class.pred)
+  print(conf)
+  FNR <- conf[2, 1] / sum(conf[2, 1], conf[2, 2])
+  return(FNR)
+}
+```
+
+```{r}
+FPR <- function(proba.pred, truth){
+  class.pred <- as.numeric(proba.pred > 0.5)
+  conf <- table(truth, class.pred)
+  print(conf)
+  FPR <- conf[1, 2] / sum(conf[1, 1], conf[1, 2])
+  return(FPR)
+}
+```
+
+## LASSO-CV (Via cross-validation)
+
+### Fitting the model
+
+```{r}
+kfoldCV.lasso.logistic <- function(y,x,K=10,seed,criterion='cv') {
+## Perform K-fold cross-validation for LASSO regression estimate 
+  #(lambda set either via cross-val or BIC or EBIC)
+## Input
+## - y: response
+## - x: data.frame with predictors, intercept should not be present
+## - K: number of folds in K-fold cross-validation
+## - seed: random number generator seed (optional)
+## - criterion: the criterion to select the penalization parameter, 
+  #either cross-val or BIC or EBIC
+## Output
+## - pred: cross-validated predictions for y
+## - ssr: residual sum of squares, sum((y-pred)^2)
+  require(glmnet)
+  if (!missing(seed)) set.seed(seed)
+  subset <- rep(1:K,ceiling(nrow(x)/K))[1:nrow(x)]
+  subset <- sample(subset,size=nrow(x),replace=FALSE)
+  pred <- double(nrow(x))
+  pred_0 <- double(nrow(x))
+  cat("Starting cross-validation")
+  if (ncol(x)>0) {  #if there are some covariates
+    for (k in 1:K) {
+        sel <- subset==k
+        pred_0[sel] <- mean(y[!sel])
+        if (criterion=='cv') {
+            fit <- cv.glmnet(x=x[!sel,,drop=FALSE], y=y[!sel], 
+                             alpha = 1, nfolds=10, family = 'binomial')
+            pred[sel] <- predict(fit,newx=x[sel,,drop=FALSE],type='response',
+                                 s='lambda.min')
+        } else if (criterion=='bic'){
+            fit <- lasso.bic.logistic(y=y[!sel],x=x[!sel,,drop=FALSE])
+            pred[sel] <- predict(fit$model,newx=x[sel,,drop=FALSE],
+                                 type='response', s = fit$lambda.opt)
+        } else if (criterion=='ebic'){
+            fit <- lasso.bic.logistic(y=y[!sel],x=x[!sel,,drop=FALSE],extended = TRUE)
+            pred[sel] <- predict(fit$model,newx=x[sel,,drop=FALSE],
+                                 type='response', s = fit$lambda.opt)
+        } else { stop("method.lambda not implemented") }
+        cat(".")
+    }
+  } else { #if there are no covariates, just use the intercept
+    for (k in 1:K) {
+      sel <- subset==k
+      pred[sel] <- mean(y[!sel],na.rm=TRUE)
+    }
+  }
+  cat("\n")
+  return(list(pred=pred, pred_0= pred_0,ssr=sum((pred-y)^2,na.rm=TRUE)))
+}
+```
+
+```{r}
+set.seed(1234)
+t0 <- Sys.time()
+fit.lassocv <- cv.glmnet(x=as.matrix(functional_darwin),y=darwin_Y,
+                         family ='binomial', nfolds = 10, aplha = 1)
+t1 <- Sys.time()
+cat('\nTime elapsed: ')
+```
+
+```{r}
+print(round(t1-t0,3))
+```
+
+```{r}
+fit.lassocv
+```
+
+```{r}
+plot(fit.lassocv) 
+```
+
+```{r}
+b.lassocv = as.vector(coef(fit.lassocv, s='lambda.min'))
+sum(b.lassocv[-1] != 0)
+```
+
+```{r}
+rownames(coef(fit.lassocv, s = 'lambda.min'))[coef(fit.lassocv,
+                                                   s = 'lambda.min')[,1]!= 0]
+```
+```{r}
+colnames(as.matrix(functional_darwin[,b.lassocv!=0]))
+```
+
+
+### Model performance
+
+We get the in-sample auc for the LASSO-CV model:
+```{r}
+lassocv.pred<- predict(fit.lassocv, newx=as.matrix(functional_darwin),
+                       s = fit.lassocv$lambda.min) # NEEDS TO BE FIXED
+(auc.lassoCV.training<- pROC::auc(darwin_Y,lassocv.pred))
+```
+
+Out-sample prediction 
+
+```{r}
+cv.pred.lasso.cv <- kfoldCV.lasso.logistic(y=darwin_Y,x=as.matrix(functional_darwin),
+                                           K=10,seed=1,criterion="cv")
+```
+
+
+```{r}
+(auc.lassocv.test<- pROC::auc(darwin_Y,cv.pred.lasso.cv$pred))
+```
+
+```{r}
+FNR(cv.pred.lasso.cv$pred,darwin_Y)
+```
+
+```{r}
+FPR(cv.pred.lasso.cv$pred,darwin_Y)
+```
+
+```{r}
+mcfadden_pseudo_r2(cv.pred.lasso.cv$pred,cv.pred.lasso.cv$pred_0, darwin_Y)
+```
+
+## RIDGE
+
+### Fitting the model
+
+```{r}
+kfoldCV.ridge <- function(y,x,K=10,seed,criterion='cv') {
+  ## Perform K-fold cross-validation for Ridge
+  # regression estimate (lambda set via cross-val)
+  ## Input
+  ## - y: response
+  ## - x: data.frame with predictors, intercept should not be present
+  ## - K: number of folds in K-fold cross-validation
+  ## - seed: random number generator seed (optional)
+  ## - criterion: the criterion to
+  #select the penalization parameter, (only cross-val for now)
+  ## Output
+  ## - pred: cross-validated predictions for y
+  ## - ssr: residual sum of squares, sum((y-pred)^2)
+  require(glmnet)
+  if (!missing(seed)) set.seed(seed)
+  subset <- rep(1:K,ceiling(nrow(x)/K))[1:nrow(x)]
+  subset <- sample(subset,size=nrow(x),replace=FALSE)
+  pred <- double(nrow(x))
+  cat("Starting cross-validation")
+  if (ncol(x)>0) {  #if there are some covariates
+    for (k in 1:K) {
+      sel <- subset==k
+      if (criterion=='cv') {
+        fit <- cv.glmnet(x=x[!sel,,drop=FALSE], y=y[!sel],
+                         alpha = 0, nfolds=10, family = 'binomial')
+        b= as.vector(coef(fit,s='lambda.min'))
+        pred[sel] <- b[1] + x[sel,,drop=FALSE] %*% as.matrix(b[-1])
+      } else { stop("method.lambda not implemented") }
+      cat(".")
+    }
+  } else { #if there are no covariates, just use the intercept
+    for (k in 1:K) {
+      sel <- subset==k
+      pred[sel] <- mean(y[!sel],na.rm=TRUE)
+    }
+  }
+  cat("\n")
+  return(list(pred=pred,ssr=sum((pred-y)^2,na.rm=TRUE)))
+}
+```
+
+```{r}
+fit.ridge= cv.glmnet(x=as.matrix(functional_darwin),
+                     y=darwin_Y,family ='binomial', alpha = 0, nfolds=10)
+fit.ridge
+```
+
+```{r}
+b.rigde <- as.vector(coef(fit.ridge, s='lambda.min'))
+names(b.rigde) <- c('intercept',colnames(functional_darwin))
+sum(b.rigde[-1]!=0)
+```
+
+### Model performance
+
+Out-sample prediction
+```{r}
+cv.ridge= kfoldCV.ridge(x=as.matrix(functional_darwin),
+                        y=darwin_Y,K=10,seed=1,criterion="cv")
+```
+
+```{r}
+(auc.ridge.test<- pROC::auc(darwin_Y,cv.ridge$pred))
+```
+
+```{r}
+FNR(cv.ridge$pred,darwin_Y)
+```
+```{r}
+FPR(cv.ridge$pred,darwin_Y)
+```
+
+```{r}
+#mcfadden_pseudo_r2(cv.ridge$pred,cv.ridge$pred, darwin_Y)
+```
+
+## LASSO-BIC 
+
+### Fitting the model
+
+Now the $\lambda$ is set via BIC using the function `lasso.bic` from `routines_seminar1.R`.
+
+```{r}
+lasso.bic.logistic <- function(y,x,extended=FALSE) {
+  #Select model in LASSO path with best BIC (using LASSO regression estimates)
+  #Input
+  # - y: vector with response variable
+  # - x: design matrix
+  #
+  #Output: list with the following elements
+  # - coef: LASSO-estimated regression coefficient with lambda set via BIC
+  # - ypred: predicted y
+  # - lambda.opt: optimal value of lambda
+  # - lambda: data.frame with bic and number of selected variables for each value
+  #of lambda
+  require(glmnet)
+  fit <- glmnet(x=x,y=y,family='binomial',alpha=1)
+  pred <- predict(fit,newx=x,type='response')
+  n <- length(y)
+  p <- colSums(fit$beta!=0) + 1
+  if (!extended){
+    bic <- -2* colSums(y*log(pred)+(1-y)*log(1-pred)) + log(n)*p 
+  } else {
+    bic <- -2* colSums(y*log(pred)+(1-y)*log(1-pred)) 
+    + log(n)*p + 2*log(choose(ncol(x),p))
+  }
+  sel <- which.min(bic)
+  beta <- c(fit$a0[sel],fit$beta[,sel]); names(beta)[1]= 'Intercept'
+  ypred <- pred[,sel]
+  ans <- list(model=fit,coef=beta,ypred=ypred,
+              lambda.opt=fit$lambda[sel],lambda=data.frame(lambda=fit$lambda,bic=bic,
+                                                           nvars=p))
+  return(ans)
+}
+```
+
+To use the BIC criteria, the parameter `extended` is set to `FALSE`.
+
+```{r}
+fit.lassobic = lasso.bic.logistic(x = as.matrix(functional_darwin),
+                                  y = darwin_Y, extended = FALSE)
+b.lassobic = fit.lassobic$coef
+names(fit.lassobic)
+#round(b.lassobic, 3)
+```
+
+The number of non-zero coefficients for LASSO-BIC corresponds to:
+
+```{r}
+sum(b.lassobic[-1] != 0)
+```
+
+### Model performance
+
+We get the in-sample auc for the LASSO-BIC model:
+```{r}
+(auc.lassoBIC.training<- pROC::auc(darwin_Y,fit.lassobic$ypred))
+```
+
+```{r}
+cv.pred.lasso.bic <- kfoldCV.lasso.logistic(y=darwin_Y,
+                                x=as.matrix(drop_darwin_x),K=10,seed=1,criterion="bic")
+
+```
+
+```{r}
+(auc.lassoBIC.crossvalidated <- pROC::auc(darwin_Y,cv.pred.lasso.bic$pred))
+```
+
+```{r}
+FNR(cv.pred.lasso.bic$pred,darwin_Y)
+```
+```{r}
+FPR(cv.pred.lasso.bic$pred,darwin_Y)
+```
+
+```{r}
+mcfadden_pseudo_r2(cv.pred.lasso.bic$pred,
+                   cv.pred.lasso.bic$pred_0, darwin_Y)
+```
+
+# LASSO regressions for individual variables across tests and all variables of a given test
+
+Create subsets of functional_darwin that groups all variables of a given test and the same variable observed across all tests.
+
+```{r}
+#Initialize an empty list to store subsets of the dataframe
+dataframe_subsets <- vector("list", 25)  # Assuming you want subsets for numbers 1 to 25
+
+#Group columns by their endings
+for (test in 1:25) {
+  cols <- grep(paste0("\\D", test, "$"), names(drop_darwin_x))
+  dataframe_subsets[[test]] <- drop_darwin_x[, cols, drop = FALSE]
+}
+
+dataframe_subsets[[1]]
+```
+
+```{r}
+#Initialize an empty list to store subsets of the dataframe
+dataframe_subsets_variables <- vector("list")  # Assuming you want subsets
+#for numbers 1 to 16
+
+#Group columns by their endings
+for (test in unique_variable_names) {
+  cols <- grep(paste0(test), names(drop_darwin_x))
+  dataframe_subsets_variables[[test]] <- drop_darwin_x[, cols, drop = FALSE]
+}
+
+dataframe_subsets_variables[[1]]
+```
+
+Use logistic regressions for all the variables of each test individualized
+
+```{r}
+individual_test_performance <- function(x, y){
+    indv_test_performance.cv <- data.frame(matrix(ncol = 2, nrow = 25))
+    colnames(indv_test_performance.cv) <- c("AUC", "FNR")
+  for (i in 1:25){
+    #sub_cv.pred.mle<- kfoldCV.mle.logistic(y=y, x=data.frame(x[[i]]),K=10,seed=1)
+    sub_cv.pred.lasso <- kfoldCV.lasso.logistic(y=y,x=as.matrix(x[[i]]),K=10,seed=1)
+    #lasso
+    indv_test_performance.cv[i,1] <- as.numeric(pROC::auc(y,sub_cv.pred.lasso$pred)) 
+    indv_test_performance.cv[i,2] <- as.numeric(FNR(sub_cv.pred.lasso$pred, y))
+    #mle
+    #indv_test_performance.cv[i,1] <- as.numeric(pROC::auc(y,sub_cv.pred.mle$pred)) 
+    #indv_test_performance.cv[i,2] <- as.numeric(FNR(sub_cv.pred.mle$pred, y)) 
+  }
+  return(indv_test_performance.cv)
+}
+
+auc_per_test_mle10cv<- individual_test_performance(dataframe_subsets, darwin_Y)
+```
+Create a line plot
+```{r}
+ggplot(data=auc_per_test_mle10cv, aes(x=factor(1:25),
+                                      y=auc_per_test_mle10cv[,2], group=1)) +
+  geom_line()+
+  xlab("Test number") + 
+  ylab("FNR") + 
+  geom_point()+
+  theme(text = element_text(size=16))
+```
+
+Perform logistic regression for each metric across 25 tests to see the predictive ability of same type measurements.
+
+```{r}
+individual_test_performance <- function(x, y){
+    indv_variable_performance.cv <- data.frame(matrix(ncol = 2, nrow = 16))
+    colnames(indv_variable_performance.cv) <- c("AUC", "FNR")
+  for (i in 1:16){
+    #sub_cv.pred.mle<- kfoldCV.mle.logistic(y=y, x=data.frame(x[[i]]),K=10,seed=1)
+    sub_cv.pred.lasso <- kfoldCV.lasso.logistic(y=y,x=as.matrix(x[[i]]),K=10,seed=1)
+    #lasso
+    indv_variable_performance.cv[i,1] <- as.numeric(pROC::auc(y,sub_cv.pred.lasso$pred)) 
+    indv_variable_performance.cv[i,2] <- as.numeric(FNR(sub_cv.pred.lasso$pred, y))
+    #mle
+    #indv_variable_performance.cv[i,1] <- as.numeric(pROC::auc(y,sub_cv.pred.mle$pred)) 
+    #indv_variable_performance.cv[i,2] <- as.numeric(FNR(sub_cv.pred.mle$pred, y)) 
+  }
+  return(indv_variable_performance.cv)
+}
+
+auc_per_variable_mle10cv<- individual_test_performance(dataframe_subsets_variables,
+                                                       darwin_Y)
+row.names(auc_per_variable_mle10cv) <- unique_variable_names
+```
+create a line plot
+```{r}
+ggplot(data=auc_per_variable_mle10cv, aes(x=row.names(auc_per_variable_mle10cv),
+                                          y=auc_per_variable_mle10cv[,1], group=1)) +
+  geom_line()+
+  xlab("Variable name") + 
+  ylab("AUC") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  geom_point() +
+  theme(text = element_text(size=16))
+```
+
+```{r}
+sub_cv.pred.mle= kfoldCV.lasso.logistic(y=darwin_Y,
+                                        x=as.matrix(dataframe_subsets[[13]]),K=10,seed=1)
+```
+
+```{r}
+(auc.mle.cv <- pROC::auc(darwin_Y,sub_cv.pred.mle$pred))
+```
+
+```{r}
+FNR(sub_cv.pred.mle$pred,darwin_Y)
+```
+
+```{r}
+#fit <- bestBIC(darwin_Y ~ ., data = drop_darwin_x, family = "binomial")
+#summary(fit)
+#coef(fit) #MLE under top model
+#confint(fit) #conf int under top model
+```
+
+# Sparse PCA and MLE
+
+```{r}
+library(sparsepca)
+#produce SPCA using  sparsity regularizers
+spca.results <- spca(functional_darwin, center = TRUE, scale = TRUE,
+                     alpha = 1e-04, beta = 1e-04, tol=1e-05, max_iter = 1000)
+```
+
+Plot a screeplot
+```{r}
+# the eigenvectors can be visualized as eigenfaces, e.g., 
+#the first eigenvector (eigenface) is displayed as follows
+#summary(spca.results) 
+
+### Visualization of variance explained
+var_explained <- spca.results$eigenvalues / sum(spca.results$eigenvalues)
+
+summary(spca.results)
+
+
+qplot(c(1:length(var_explained)), var_explained) + 
+  geom_line() + 
+  geom_point(size=0)+
+  xlab("Principal Component") + 
+  xlim(1,25) +
+  ylab("Variance Explained") +
+  ggtitle("Scree Plot") +
+  ylim(0, 0.120)
+
+pca_darwin_x <- spca.results$scores[, 1:5]
+full_darwin_x_pca <- spca.results$scores[, 1:173]
+```
+fit MLE
+```{r}
+logistic_model <- glm(darwin_Y ~., data = data.frame(pca_darwin_x),
+                      family = binomial)
+# Summarize the model
+summary(logistic_model)
+# Make predictions
+probabilities <- logistic_model %>% predict(data.frame(pca_darwin_x),
+                                            type = "response")
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+# Model accuracy
+mean(predicted.classes == darwin_Y)
+```
+
+```{r}
+HDRFA::PCA_FN(full_darwin_x_pca, rmax = length(full_darwin_x_pca))
+```
+mle function for cross-validations
+```{r}
+kfoldCV.mle.logistic <- function(y,x,K=10,seed) {
+## Perform K-fold cross-validation for least-squares regression estimate
+## Input
+## - y: response
+## - x: data.frame with predictors, intercept should not be present
+## - K: number of folds in K-fold cross-validation
+## - seed: random number generator seed (optional)
+## Output
+## - pred: cross-validated predictions for y
+## - ssr: residual sum of squares, sum((y-pred)^2)
+  if (!missing(seed)) set.seed(seed)
+  subset <- rep(1:K,ceiling(nrow(x)/K))[1:nrow(x)]
+  subset <- sample(subset,size=nrow(x),replace=FALSE)
+  pred <- double(nrow(x))
+  pred_0 <- double(nrow(x))
+  if (ncol(x)>0) {
+    for (k in 1:K) {
+      sel <- subset==k
+      fit <- glm(y[!sel] ~ ., data=x[!sel,,drop=FALSE], family = 'binomial')
+      pred[sel] <- predict(fit, newdata=x[sel,,drop=FALSE],type='response')
+      pred_0[sel] <- mean(y[!sel])
+    }
+  } else {
+    for (k in 1:K) {
+      sel <- subset==k
+      pred[sel] <- mean(y[!sel],na.rm=TRUE)
+    }
+  }
+  return(list(pred=pred, pred_0 =pred_0, ssr=sum((pred-y)^2,na.rm=TRUE)))
+}
+```
+
+```{r}
+cv.pred.mle= kfoldCV.mle.logistic(y=darwin_Y,
+                                  x=data.frame(pca_darwin_x),K=10,seed=1)
+```
+
+```{r}
+(auc.mle.cv <- pROC::auc(darwin_Y,cv.pred.mle$pred))
+```
+
+```{r}
+FNR(cv.pred.mle$pred,darwin_Y)
+```
+
+```{r}
+FPR(cv.pred.mle$pred,darwin_Y)
+```
+
+# Clustering (Gaussian mixtures)
+
+We implement a Gaussian mixture model on our data with the function `Mclust`.
+
+```{r}
+mod <- Mclust(standardized_functional_darwin)
+summary(mod$BIC)
+```
+
+We can use BIC values to choose the type of GMM and optimal number of clusters. The best BIC values is obtained for VVI (varying volume, varying shape, equal orientation) with 2 clusters.
+
+```{r}
+plot(mod, what = "BIC", ylim = range(mod$BIC[,-(1:2)], na.rm = TRUE),
+     legendArgs = list(x = "bottomleft"))
+```
+We save our assignments by GMM
+```{r}
+gmm.groups <- Mclust(standardized_functional_darwin,
+                     modelNames = c('VVI'),G=2)$classification
+```
+Plot of assignations according to posterior probabilities
+```{r}
+drmod <- MclustDR(mod, lambda = 1)
+plot(drmod, what = "contour")
+```
+
+## Comparison with true classes
+
+```{r}
+truth.labels <- as.matrix(darwin_Y)
+truth <- as.numeric(as.factor(as.matrix(darwin_Y)))
+table(truth.labels)
+```
+
+```{r}
+compare.gmm.truth <- cluster.stats(
+  clustering= mod$classification,
+  alt.clustering = truth,
+  compareonly = TRUE)
+
+compare.res <- rbind(unlist(compare.gmm.truth))
+compare.res <- data.frame(cbind(c('Gaussian Mixtures'),round(compare.res,3)))
+colnames(compare.res)[1] <- 'clustering method'
+compare.res %>% arrange(desc(corrected.rand))
+```
+
+table with true labels and cluster assignments for FPR and FNR
+```{r}
+conf_GMM <- table(darwin_Y, gmm.groups)
+conf_GMM
+
+FPR_GMM <- conf_GMM[2,2] / sum(conf_GMM[2,2] + conf_GMM[2,1])
+FNR_GMM <- conf_GMM[1,1] / sum(conf_GMM[1,1] + conf_GMM[2,1])
+FPR_GMM
+FNR_GMM
+```
+
+# Random Forest (DISCARDED IN THE FINAL VERSION)  
+
+```{r}
+library(rsample)     
+library(randomForest) 
+library(ranger)      
+library(caret)        
+library(h2o)          
+
+standardized_functional_darwin <- scale(functional_darwin)
+```
+
+```{r}
+combined_data <- data.frame(standardized_functional_darwin, darwin_Y)
+```
+
+```{r}
+  
+# Loading package 
+library(caTools) 
+library(randomForest) 
+
+```
+
+```{r}
+set.seed(120)  # Setting seed 
+
+# Generating random indices for train and test
+train_indices <- sample(nrow(combined_data), 0.8 * nrow(combined_data))  # 70% train
+train <- combined_data[train_indices, ]
+test <- combined_data[-train_indices, ]
+
+# Separating predictors (x) and target variable (y) for training
+x_train <- subset(train, select = -darwin_Y)
+y_train <- train$darwin_Y
+```
+
+```{r}
+library(randomForest)
+
+# Fitting a random forest model
+model <- randomForest(x = x_train, y = as.factor(y_train), ntree = 500)
+
+# Summary of the model
+print(model)
+```
+
+predict probabilities using test train split
+```{r}
+# Extracting probabilities for class 1
+predicted_probs <- predict(model, test, type = "prob")[, 2] 
+
+# Compute AUC
+roc_obj <- pROC::roc(test$darwin_Y, predicted_probs)
+auc <- pROC::auc(roc_obj)
+print(paste("AUC:", auc))
+
+# Compute False Negative Rate (FNR)
+threshold <- 0.5  # Threshold for class prediction
+predictions <- ifelse(predicted_probs > threshold, 1, 0)
+conf_matrix <- table(Actual = test$darwin_Y, Predicted = predictions)
+fnr <- conf_matrix[2, 1] / sum(conf_matrix[2, ])
+print(paste("FNR:", fnr))
+```
+
+```{r}
+# Get feature importance
+model <- randomForest(x = x_train, y = as.factor(y_train), ntree = 500)
+feature_importance <- randomForest::importance(model)
+sorted_importance <- feature_importance[order(-feature_importance[, "MeanDecreaseGini"]),
+                                        ]
+print(sorted_importance)
+```
+
+kfold cross validation as a substitute of train-test split 
+```{r}
+kfoldCV.randomforest.logistic <- function(y,x,K=10,seed) {
+## Perform K-fold cross-validation for least-squares regression estimate
+## Input
+## - y: response
+## - x: data.frame with predictors, intercept should not be present
+## - K: number of folds in K-fold cross-validation
+## - seed: random number generator seed (optional)
+## Output
+## - pred: cross-validated predictions for y
+## - ssr: residual sum of squares, sum((y-pred)^2)
+  if (!missing(seed)) set.seed(seed)
+  subset <- rep(1:K,ceiling(nrow(x)/K))[1:nrow(x)]
+  subset <- sample(subset,size=nrow(x),replace=FALSE)
+  pred <- double(nrow(x))
+  pred_0 <- double(nrow(x))
+  if (ncol(x)>0) {
+    for (k in 1:K) {
+      sel <- subset==k
+      #fit <- glm(y[!sel] ~ ., data=x[!sel,,drop=FALSE], family = 'binomial')
+      fit <- randomForest(x = x[!sel,,drop=FALSE],
+                          y = as.factor(y[!sel]), ntree = 500)
+      pred[sel] <- predict(fit, newdata=x[sel,,drop=FALSE],
+                           type='response')
+      pred_0[sel] <- mean(y[!sel])
+    }
+  } else {
+    for (k in 1:K) {
+      sel <- subset==k
+      pred[sel] <- mean(y[!sel],na.rm=TRUE)
+    }
+  }
+  return(list(pred=pred, pred_0 =pred_0,
+              ssr=sum((pred-y)^2,na.rm=TRUE)))
+}
+```
+
+## Random Forest CV prediction metrics
+
+```{r}
+cv.pred.RandomForest <- kfoldCV.randomforest.logistic(y=darwin_Y,
+                                                      x=data.frame(functional_darwin),
+                                                      K=10,seed=1)
+```
+
+Out-sample metrics
+
+```{r}
+(auc.randomForest.cv <- pROC::auc(darwin_Y,cv.pred.RandomForest$pred))
+```
+
+```{r}
+cv.pred.RandomForest$pred -1
+```
+
+```{r}
+FNR(cv.pred.RandomForest$pred -1,darwin_Y)
+```
+
+```{r}
+FPR(cv.pred.RandomForest$pred -1,darwin_Y)
+```
